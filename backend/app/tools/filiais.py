@@ -1,12 +1,13 @@
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
-
 import pandas as pd
-
+from app.core.config import get_settings
 from app.tools.schemas import BuscarFiliaisInput, ObterFilialInput
 
-DATA_PATH = Path(__file__).resolve().parents[3] / "data" / "filiais.parquet"
+settings = get_settings()
+
+DATA_PATH = Path(settings.data_dir).resolve() / "filiais.parquet"
 
 def _carregar_filiais() -> pd.DataFrame:
     if not DATA_PATH.exists():

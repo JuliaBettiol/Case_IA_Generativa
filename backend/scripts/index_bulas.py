@@ -6,7 +6,11 @@ from app.rag.pdf_loader import carregar_bulas
 from app.rag.vector_store import VectorStore
 
 BATCH_SIZE = 50
-CORPUS_DIR = Path("../data/corpus_bulas")
+from app.core.config import get_settings
+
+settings = get_settings()
+
+CORPUS_DIR = Path(settings.data_dir) / "corpus_bulas"
 
 async def main() -> None:
     print("Carregando bulas...")
