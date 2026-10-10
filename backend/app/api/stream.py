@@ -27,6 +27,11 @@ async def chat_stream(
         for message in request.messages
     ]
 
+    if messages[-1]["role"] != "user":
+        raise ValueError(
+            "A última mensagem deve ser do usuário."
+        )
+
     async def event_generator():
         try:
             pergunta = messages[-1]["content"]

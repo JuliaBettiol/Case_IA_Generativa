@@ -7,37 +7,58 @@ from app.rag.medications import identificar_source
 ValidationResult = Literal[
     "medicamento_disponivel",
     "medicamento_indisponivel",
-    "sem_medicamento_especifico",
+    "consulta_geral_bulas",
+    "orientacao_individual",
 ]
 
 
 VALIDATION_PROMPT = """
-Analise a pergunta do usuário.
-
-Você deve identificar se a pergunta menciona explicitamente
-um medicamento específico.
-
-Responda SOMENTE com uma destas opções:
+Classifique a pergunta do usuário em exatamente uma destas categorias:
 
 medicamento_especifico
-sem_medicamento_especifico
+consulta_geral_bulas
+orientacao_individual
 
-Considere como medicamento específico tanto nomes comerciais
-quanto princípios ativos.
+DEFINIÇÕES:
 
-Exemplos:
+medicamento_especifico
+- a pergunta menciona explicitamente um medicamento, nome comercial
+  ou princípio ativo.
 
-"Quais os efeitos adversos da amoxicilina?"
+consulta_geral_bulas
+- a pergunta pede informações gerais ou comparações sobre os
+  medicamentos presentes nas bulas;
+- não pede indicação personalizada de tratamento.
+
+orientacao_individual
+- o usuário pergunta qual medicamento deve tomar;
+- pede indicação, prescrição, dose ou tratamento para si ou outra pessoa;
+- descreve sintomas buscando uma recomendação individual de medicamento.
+
+EXEMPLOS:
+
+"Quais são os efeitos adversos da amoxicilina?"
 medicamento_especifico
 
 "Para que serve o Rohydorm?"
 medicamento_especifico
 
-"Quais medicamentos podem causar sonolência?"
-sem_medicamento_especifico
+"Quais medicamentos das bulas podem causar sonolência?"
+consulta_geral_bulas
 
 "Quais são os principais efeitos adversos descritos nas bulas?"
-sem_medicamento_especifico
+consulta_geral_bulas
+
+"Qual medicamento devo tomar para dor no peito?"
+orientacao_individual
+
+"Estou com dor de cabeça. O que devo tomar?"
+orientacao_individual
+
+"Qual dose devo tomar para tratar minha dor?"
+orientacao_individual
+
+Responda SOMENTE com uma das três categorias.
 """
 
 
@@ -75,8 +96,11 @@ class MedicationValidator:
         if resultado == "medicamento_especifico":
             return "medicamento_indisponivel"
 
-        if resultado == "sem_medicamento_especifico":
-            return "sem_medicamento_especifico"
+        if resultado == "consulta_geral_bulas":
+            return "consulta_geral_bulas"
+
+        if resultado == "orientacao_individual":
+            return "orientacao_individual"
 
         raise ValueError(
             "Classificação inválida retornada pelo "

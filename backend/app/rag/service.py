@@ -1,8 +1,10 @@
 from typing import Any
+
 from app.llm.openai_provider import OpenAIProvider
+from app.rag.medication_validator import MedicationValidator
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.retriever import Retriever
-from app.rag.medication_validator import MedicationValidator
+
 
 RAG_SYSTEM_PROMPT = """
 Você é um assistente da Panvel especializado em responder perguntas
@@ -12,26 +14,34 @@ REGRAS:
 
 1. Responda somente com informações presentes no contexto recuperado.
 
-2. Não invente informações que não estejam nos trechos fornecidos.
+2. Nunca use conhecimento externo ao contexto para complementar
+   informações farmacológicas.
 
-3. Se o contexto não for suficiente para responder com segurança,
+3. Não invente informações que não estejam nos trechos fornecidos.
+
+4. Se o contexto não for suficiente para responder com segurança,
    diga claramente que não encontrou informação suficiente nas bulas
    disponíveis.
 
-4. Não faça diagnóstico médico.
+5. Não faça diagnóstico médico.
 
-5. Não prescreva medicamentos, doses ou tratamentos individualizados.
+6. Não recomende qual medicamento o usuário deve tomar.
 
-6. Diferencie informações documentais da bula de orientação médica
+7. Não prescreva medicamentos, doses ou tratamentos individualizados.
+
+8. Diferencie informações documentais da bula de orientação médica
    individual.
 
-7. Quando houver riscos graves descritos no contexto, deixe claro que
+9. Quando houver riscos graves descritos no contexto, deixe claro que
    situações graves exigem avaliação profissional.
 
-8. Ao final da resposta, inclua uma seção "Fonte" citando exatamente
-   o nome do arquivo da bula fornecido no contexto.
+10. Ao final da resposta, inclua uma seção "Fonte" citando exatamente
+    o nome do arquivo da bula fornecido no contexto.
 
-9. Não cite uma fonte que não tenha sido fornecida no contexto.
+11. Não cite uma fonte que não tenha sido fornecida no contexto.
+
+12. Cite somente fontes que sustentem as informações apresentadas
+    na resposta.
 """
 
 
@@ -42,83 +52,99 @@ class RAGService:
         self.query_rewriter = QueryRewriter()
         self.medication_validator = MedicationValidator()
 
+    @staticmethod
+    def _documentos_publicos(
+        documentos: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "source": documento["source"],
+                "chunk_index": documento["chunk_index"],
+                "score": documento["score"],
+            }
+            for documento in documentos
+        ]
+
     async def preparar_contexto(
-            self,
-            messages: list[dict[str, Any]],
-        ) -> dict[str, Any]:
-            if not messages:
-                raise ValueError(
-                    "É necessário fornecer pelo menos uma mensagem."
-                )
-
-            pergunta_original = messages[-1].get(
-                "content",
-                "",
+        self,
+        messages: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        if not messages:
+            raise ValueError(
+                "É necessário fornecer pelo menos uma mensagem."
             )
 
-            pergunta_busca = await self.query_rewriter.reescrever(
-                messages
-            )
+        pergunta_original = messages[-1].get(
+            "content",
+            "",
+        )
 
-            validacao = await self.medication_validator.validar(
-                pergunta_busca
-            )
+        pergunta_busca = await self.query_rewriter.reescrever(
+            messages
+        )
 
-            if validacao == "medicamento_indisponivel":
-                return {
-                    "messages": [],
-                    "sources": [],
-                    "retrieved_documents": [],
-                    "search_query": pergunta_busca,
-                }
+        validacao = await self.medication_validator.validar(
+            pergunta_busca
+        )
 
-            documentos = await self.retriever.buscar(
-                pergunta_busca,
-                aplicar_threshold=(
-                    validacao != "sem_medicamento_especifico"
-                ),
-            )
-
-            contexto = "\n\n".join(
-                (
-                    f"[Fonte: {documento['source']} | "
-                    f"Chunk: {documento['chunk_index']}]\n"
-                    f"{documento['text']}"
-                )
-                for documento in documentos
-            )
-
-            llm_messages = [
-                {
-                    "role": "system",
-                    "content": RAG_SYSTEM_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": (
-                        f"PERGUNTA ORIGINAL:\n"
-                        f"{pergunta_original}\n\n"
-                        f"PERGUNTA CONTEXTUALIZADA:\n"
-                        f"{pergunta_busca}\n\n"
-                        f"CONTEXTO DAS BULAS:\n"
-                        f"{contexto}"
-                    ),
-                },
-            ]
-
-            sources = list(
-                dict.fromkeys(
-                    documento["source"]
-                    for documento in documentos
-                )
-            )
-
+        if validacao in {
+            "medicamento_indisponivel",
+            "orientacao_individual",
+        }:
             return {
-                "messages": llm_messages,
-                "sources": sources,
-                "retrieved_documents": documentos,
+                "messages": [],
+                "sources": [],
+                "retrieved_documents": [],
                 "search_query": pergunta_busca,
             }
+
+        documentos = await self.retriever.buscar(
+            pergunta_busca,
+            aplicar_threshold=(
+                validacao != "consulta_geral_bulas"
+            ),
+        )
+
+        contexto = "\n\n".join(
+            (
+                f"[Fonte: {documento['source']} | "
+                f"Chunk: {documento['chunk_index']}]\n"
+                f"{documento['text']}"
+            )
+            for documento in documentos
+        )
+
+        llm_messages = [
+            {
+                "role": "system",
+                "content": RAG_SYSTEM_PROMPT,
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"PERGUNTA ORIGINAL:\n"
+                    f"{pergunta_original}\n\n"
+                    f"PERGUNTA CONTEXTUALIZADA:\n"
+                    f"{pergunta_busca}\n\n"
+                    f"CONTEXTO DAS BULAS:\n"
+                    f"{contexto}"
+                ),
+            },
+        ]
+
+        sources = list(
+            dict.fromkeys(
+                documento["source"]
+                for documento in documentos
+            )
+        )
+
+        return {
+            "messages": llm_messages,
+            "sources": sources,
+            "retrieved_documents": documentos,
+            "search_query": pergunta_busca,
+        }
 
     async def stream_resposta(
         self,
@@ -131,9 +157,9 @@ class RAGService:
             "data": {
                 "sources": contexto["sources"],
                 "search_query": contexto["search_query"],
-                "retrieved_documents": contexto[
-                    "retrieved_documents"
-                ],
+                "retrieved_documents": self._documentos_publicos(
+                    contexto["retrieved_documents"]
+                ),
             },
         }
 
