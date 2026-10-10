@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, AsyncIterator
 
 class LLMProvider(ABC):
     @abstractmethod
@@ -8,5 +8,11 @@ class LLMProvider(ABC):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
     ) -> Any:
-        """Envia mensagens ao modelo e retorna a resposta do provedor."""
-        raise NotImplementedError
+        pass
+
+    @abstractmethod
+    async def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+    ) -> AsyncIterator[str]:
+        pass

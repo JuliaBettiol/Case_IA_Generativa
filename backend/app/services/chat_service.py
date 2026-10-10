@@ -138,3 +138,145 @@ class ChatService:
         raise RuntimeError(
             "Limite máximo de iterações de ferramentas atingido."
         )
+
+    async def stream_resposta(
+        self,
+        messages: list[dict[str, Any]],
+    ):
+        historico = [
+            {
+                "role": "system",
+                "content": SYSTEM_PROMPT,
+            },
+            *messages,
+        ]
+
+        tools_executadas: list[dict[str, Any]] = []
+
+        for _ in range(
+            self.settings.max_tool_iterations
+        ):
+            response = await self.provider.chat(
+                messages=historico,
+                tools=TOOL_DEFINITIONS,
+            )
+
+            message = response.choices[0].message
+
+            # Caso o modelo responda sem precisar de ferramenta.
+            if not message.tool_calls:
+                yield {
+                    "type": "metadata",
+                    "data": {
+                        "tool_calls": tools_executadas,
+                    },
+                }
+
+                yield {
+                    "type": "content",
+                    "data": {
+                        "text": message.content or "",
+                    },
+                }
+
+                return
+
+            historico.append(
+                {
+                    "role": "assistant",
+                    "content": message.content,
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name":
+                                    tool_call.function.name,
+                                "arguments":
+                                    tool_call.function.arguments,
+                            },
+                        }
+                        for tool_call
+                        in message.tool_calls
+                    ],
+                }
+            )
+
+            encontrou_resultado = False
+
+            for tool_call in message.tool_calls:
+                nome = tool_call.function.name
+
+                try:
+                    argumentos = json.loads(
+                        tool_call.function.arguments
+                    )
+
+                    resultado = executar_tool(
+                        nome,
+                        argumentos,
+                    )
+
+                    tools_executadas.append(
+                        {
+                            "name": nome,
+                            "arguments": argumentos,
+                        }
+                    )
+
+                    historico.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id":
+                                tool_call.id,
+                            "content": json.dumps(
+                                resultado,
+                                ensure_ascii=False,
+                            ),
+                        }
+                    )
+
+                    if resultado:
+                        encontrou_resultado = True
+
+                except Exception as exc:
+                    historico.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id":
+                                tool_call.id,
+                            "content": json.dumps(
+                                {
+                                    "error": str(exc),
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    )
+
+            if encontrou_resultado:
+                yield {
+                    "type": "metadata",
+                    "data": {
+                        "tool_calls": tools_executadas,
+                    },
+                }
+
+                async for chunk in (
+                    self.provider.stream_chat(
+                        historico
+                    )
+                ):
+                    yield {
+                        "type": "content",
+                        "data": {
+                            "text": chunk,
+                        },
+                    }
+
+                return
+
+        raise RuntimeError(
+            "Limite máximo de iterações "
+            "de ferramentas atingido."
+        )

@@ -1,5 +1,4 @@
 from typing import Any
-
 from app.llm.openai_provider import OpenAIProvider
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.retriever import Retriever
@@ -41,6 +40,98 @@ class RAGService:
         self.retriever = Retriever()
         self.provider = OpenAIProvider()
         self.query_rewriter = QueryRewriter()
+
+    async def preparar_contexto(
+            self,
+            messages: list[dict[str, Any]],
+        ) -> dict[str, Any]:
+            if not messages:
+                raise ValueError(
+                    "É necessário fornecer pelo menos uma mensagem."
+                )
+
+            pergunta_original = messages[-1].get(
+                "content",
+                "",
+            )
+
+            pergunta_busca = await self.query_rewriter.reescrever(
+                messages
+            )
+
+            documentos = await self.retriever.buscar(
+                pergunta_busca
+            )
+
+            contexto = "\n\n".join(
+                (
+                    f"[Fonte: {documento['source']} | "
+                    f"Chunk: {documento['chunk_index']}]\n"
+                    f"{documento['text']}"
+                )
+                for documento in documentos
+            )
+
+            llm_messages = [
+                {
+                    "role": "system",
+                    "content": RAG_SYSTEM_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"PERGUNTA ORIGINAL:\n"
+                        f"{pergunta_original}\n\n"
+                        f"PERGUNTA CONTEXTUALIZADA:\n"
+                        f"{pergunta_busca}\n\n"
+                        f"CONTEXTO DAS BULAS:\n"
+                        f"{contexto}"
+                    ),
+                },
+            ]
+
+            sources = list(
+                dict.fromkeys(
+                    documento["source"]
+                    for documento in documentos
+                )
+            )
+
+            return {
+                "messages": llm_messages,
+                "sources": sources,
+                "retrieved_documents": documentos,
+                "search_query": pergunta_busca,
+            }
+
+    async def stream_resposta(
+        self,
+        messages: list[dict[str, Any]],
+    ):
+        contexto = await self.preparar_contexto(
+            messages
+        )
+
+        yield {
+            "type": "metadata",
+            "data": {
+                "sources": contexto["sources"],
+                "search_query": contexto["search_query"],
+                "retrieved_documents": contexto[
+                    "retrieved_documents"
+                ],
+            },
+        }
+
+        async for chunk in self.provider.stream_chat(
+            contexto["messages"]
+        ):
+            yield {
+                "type": "content",
+                "data": {
+                    "text": chunk,
+                },
+            }
 
     async def responder(
         self,

@@ -28,3 +28,22 @@ class OpenAIProvider(LLMProvider):
             request["tool_choice"] = "auto"
 
         return await self.client.chat.completions.create(**request)
+
+    async def stream_chat(
+        self,
+        messages: list[dict[str, Any]],
+    ):
+        stream = await self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            stream=True,
+        )
+
+        async for chunk in stream:
+            if not chunk.choices:
+                continue
+
+            content = chunk.choices[0].delta.content
+
+            if content:
+                yield content
