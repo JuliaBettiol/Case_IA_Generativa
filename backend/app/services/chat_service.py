@@ -1,10 +1,12 @@
 import json
 from typing import Any
+
 from app.core.config import get_settings
+from app.core.prompts import SYSTEM_PROMPT
 from app.llm.openai_provider import OpenAIProvider
 from app.tools.definitions import TOOL_DEFINITIONS
-from app.core.prompts import SYSTEM_PROMPT
 from app.tools.registry import executar_tool
+
 
 class ChatService:
     def __init__(self) -> None:
@@ -22,16 +24,28 @@ class ChatService:
             },
             *messages,
         ]
+
         tools_executadas: list[dict[str, Any]] = []
+
+        # Quando uma busca já retornar dados suficientes,
+        # desabilitamos novas tools e deixamos o LLM apenas
+        # formular a resposta final.
+        finalizar_sem_tools = False
 
         for _ in range(self.settings.max_tool_iterations):
             response = await self.provider.chat(
                 messages=historico,
-                tools=TOOL_DEFINITIONS,
+                tools=(
+                    None
+                    if finalizar_sem_tools
+                    else TOOL_DEFINITIONS
+                ),
             )
 
             message = response.choices[0].message
 
+            # Se o modelo não solicitou nenhuma ferramenta,
+            # temos a resposta final.
             if not message.tool_calls:
                 return {
                     "content": message.content,
@@ -45,6 +59,7 @@ class ChatService:
                     else None,
                 }
 
+            # Registra a solicitação de ferramentas feita pelo modelo.
             historico.append(
                 {
                     "role": "assistant",
@@ -93,6 +108,18 @@ class ChatService:
                             ),
                         }
                     )
+
+                    # Uma busca de filiais que encontrou resultados
+                    # já fornece dados suficientes para o LLM
+                    # formular a resposta final.
+                    #
+                    # Na próxima iteração, nenhuma nova ferramenta
+                    # será disponibilizada.
+                    if (
+                        nome == "buscar_filiais"
+                        and resultado
+                    ):
+                        finalizar_sem_tools = True
 
                 except Exception as exc:
                     historico.append(

@@ -35,6 +35,28 @@ REGRAS DE USO DAS FERRAMENTAS:
 9. Não amplie a consulta para outras filiais, cidades ou serviços
    sem solicitação explícita do usuário.
 
+10. Em perguntas de continuação, como "delas", "dessas filiais",
+    "entre elas" ou expressões semelhantes, use o histórico da
+    conversa para preservar os filtros da consulta anterior.
+
+11. Quando o usuário adicionar um novo critério em uma pergunta de
+    continuação, combine esse critério com os filtros relevantes da
+    consulta anterior.
+
+12. Se uma única chamada de buscar_filiais responder à pergunta,
+    não faça chamadas adicionais com valores opostos ou filtros
+    complementares.
+
+13. Após receber resultados suficientes de buscar_filiais para
+    responder à pergunta atual, produza imediatamente a resposta
+    final.
+    
+14. Em perguntas de continuação sobre um conjunto de filiais,
+    prefira buscar_filiais combinando os filtros da consulta anterior
+    com o novo critério. Não use obter_filial individualmente para
+    validar cada filial quando uma única chamada de buscar_filiais
+    puder responder à pergunta.
+
 Se os dados retornados por uma ferramenta forem suficientes para
 responder à pergunta, produza imediatamente a resposta final.
 """

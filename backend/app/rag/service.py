@@ -1,6 +1,9 @@
 from typing import Any
+
 from app.llm.openai_provider import OpenAIProvider
+from app.rag.query_rewriter import QueryRewriter
 from app.rag.retriever import Retriever
+
 
 RAG_SYSTEM_PROMPT = """
 Você é um assistente da Panvel especializado em responder perguntas
@@ -37,12 +40,29 @@ class RAGService:
     def __init__(self) -> None:
         self.retriever = Retriever()
         self.provider = OpenAIProvider()
+        self.query_rewriter = QueryRewriter()
 
     async def responder(
         self,
-        pergunta: str,
+        messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        documentos = await self.retriever.buscar(pergunta)
+        if not messages:
+            raise ValueError(
+                "É necessário fornecer pelo menos uma mensagem."
+            )
+
+        pergunta_original = messages[-1].get(
+            "content",
+            "",
+        )
+
+        pergunta_busca = await self.query_rewriter.reescrever(
+            messages
+        )
+
+        documentos = await self.retriever.buscar(
+            pergunta_busca
+        )
 
         if not documentos:
             return {
@@ -52,6 +72,7 @@ class RAGService:
                 ),
                 "sources": [],
                 "retrieved_documents": [],
+                "search_query": pergunta_busca,
                 "usage": None,
             }
 
@@ -64,7 +85,7 @@ class RAGService:
             for documento in documentos
         )
 
-        messages = [
+        llm_messages = [
             {
                 "role": "system",
                 "content": RAG_SYSTEM_PROMPT,
@@ -72,14 +93,18 @@ class RAGService:
             {
                 "role": "user",
                 "content": (
-                    f"PERGUNTA:\n{pergunta}\n\n"
-                    f"CONTEXTO DAS BULAS:\n{contexto}"
+                    f"PERGUNTA ORIGINAL:\n"
+                    f"{pergunta_original}\n\n"
+                    f"PERGUNTA CONTEXTUALIZADA:\n"
+                    f"{pergunta_busca}\n\n"
+                    f"CONTEXTO DAS BULAS:\n"
+                    f"{contexto}"
                 ),
             },
         ]
 
         response = await self.provider.chat(
-            messages=messages,
+            messages=llm_messages,
         )
 
         message = response.choices[0].message
@@ -95,6 +120,7 @@ class RAGService:
             "content": message.content,
             "sources": sources,
             "retrieved_documents": documentos,
+            "search_query": pergunta_busca,
             "usage": {
                 "prompt_tokens": response.usage.prompt_tokens,
                 "completion_tokens": response.usage.completion_tokens,
