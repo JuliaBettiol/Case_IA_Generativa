@@ -37,13 +37,29 @@ class OpenAIProvider(LLMProvider):
             model=self.model,
             messages=messages,
             stream=True,
+            stream_options={"include_usage": True},
         )
 
         async for chunk in stream:
+            if chunk.usage:
+                yield {
+                    "type": "usage",
+                    "data": {
+                        "prompt_tokens": chunk.usage.prompt_tokens,
+                        "completion_tokens": chunk.usage.completion_tokens,
+                        "total_tokens": chunk.usage.total_tokens,
+                    },
+                }
+
             if not chunk.choices:
                 continue
 
             content = chunk.choices[0].delta.content
 
             if content:
-                yield content
+                yield {
+                    "type": "content",
+                    "data": {
+                        "text": content,
+                    },
+                }

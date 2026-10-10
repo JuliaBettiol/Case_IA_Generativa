@@ -262,17 +262,12 @@ class ChatService:
                     },
                 }
 
-                async for chunk in (
+                async for evento in (
                     self.provider.stream_chat(
                         historico
                     )
                 ):
-                    yield {
-                        "type": "content",
-                        "data": {
-                            "text": chunk,
-                        },
-                    }
+                    yield evento
 
                 return
 

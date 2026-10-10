@@ -123,15 +123,11 @@ class RAGService:
             },
         }
 
-        async for chunk in self.provider.stream_chat(
+        async for evento in self.provider.stream_chat(
             contexto["messages"]
         ):
-            yield {
-                "type": "content",
-                "data": {
-                    "text": chunk,
-                },
-            }
+            yield evento
+
 
     async def responder(
         self,

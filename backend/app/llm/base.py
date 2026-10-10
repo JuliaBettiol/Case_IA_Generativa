@@ -14,5 +14,5 @@ class LLMProvider(ABC):
     async def stream_chat(
         self,
         messages: list[dict[str, Any]],
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[dict[str, Any]]:
         pass

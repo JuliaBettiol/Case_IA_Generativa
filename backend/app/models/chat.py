@@ -26,3 +26,5 @@ class ChatResponse(BaseModel):
     retrieved_documents: list[RetrievedDocument] = []
     search_query: str | None = None
     usage: dict | None = None
+    trace_id: str | None = None
+    latency_ms: float | None = None
