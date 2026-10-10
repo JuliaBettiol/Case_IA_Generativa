@@ -2,7 +2,7 @@ from typing import Any
 from app.llm.openai_provider import OpenAIProvider
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.retriever import Retriever
-
+from app.rag.medication_validator import MedicationValidator
 
 RAG_SYSTEM_PROMPT = """
 Você é um assistente da Panvel especializado em responder perguntas
@@ -40,6 +40,7 @@ class RAGService:
         self.retriever = Retriever()
         self.provider = OpenAIProvider()
         self.query_rewriter = QueryRewriter()
+        self.medication_validator = MedicationValidator()
 
     async def preparar_contexto(
             self,
@@ -59,8 +60,23 @@ class RAGService:
                 messages
             )
 
-            documentos = await self.retriever.buscar(
+            validacao = await self.medication_validator.validar(
                 pergunta_busca
+            )
+
+            if validacao == "medicamento_indisponivel":
+                return {
+                    "messages": [],
+                    "sources": [],
+                    "retrieved_documents": [],
+                    "search_query": pergunta_busca,
+                }
+
+            documentos = await self.retriever.buscar(
+                pergunta_busca,
+                aplicar_threshold=(
+                    validacao != "sem_medicamento_especifico"
+                ),
             )
 
             contexto = "\n\n".join(
@@ -108,9 +124,7 @@ class RAGService:
         self,
         messages: list[dict[str, Any]],
     ):
-        contexto = await self.preparar_contexto(
-            messages
-        )
+        contexto = await self.preparar_contexto(messages)
 
         yield {
             "type": "metadata",
@@ -123,91 +137,56 @@ class RAGService:
             },
         }
 
+        if not contexto["retrieved_documents"]:
+            yield {
+                "type": "content",
+                "data": {
+                    "text": (
+                        "Não encontrei informações suficientes "
+                        "nas bulas disponíveis para responder "
+                        "com segurança."
+                    ),
+                },
+            }
+            return
+
         async for evento in self.provider.stream_chat(
             contexto["messages"]
         ):
             yield evento
 
-
     async def responder(
         self,
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        if not messages:
-            raise ValueError(
-                "É necessário fornecer pelo menos uma mensagem."
-            )
+        contexto = await self.preparar_contexto(messages)
 
-        pergunta_original = messages[-1].get(
-            "content",
-            "",
-        )
-
-        pergunta_busca = await self.query_rewriter.reescrever(
-            messages
-        )
-
-        documentos = await self.retriever.buscar(
-            pergunta_busca
-        )
-
-        if not documentos:
+        if not contexto["retrieved_documents"]:
             return {
                 "content": (
                     "Não encontrei informações suficientes "
-                    "nas bulas disponíveis."
+                    "nas bulas disponíveis para responder "
+                    "com segurança."
                 ),
                 "sources": [],
                 "retrieved_documents": [],
-                "search_query": pergunta_busca,
+                "search_query": contexto["search_query"],
                 "usage": None,
             }
 
-        contexto = "\n\n".join(
-            (
-                f"[Fonte: {documento['source']} | "
-                f"Chunk: {documento['chunk_index']}]\n"
-                f"{documento['text']}"
-            )
-            for documento in documentos
-        )
-
-        llm_messages = [
-            {
-                "role": "system",
-                "content": RAG_SYSTEM_PROMPT,
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"PERGUNTA ORIGINAL:\n"
-                    f"{pergunta_original}\n\n"
-                    f"PERGUNTA CONTEXTUALIZADA:\n"
-                    f"{pergunta_busca}\n\n"
-                    f"CONTEXTO DAS BULAS:\n"
-                    f"{contexto}"
-                ),
-            },
-        ]
-
         response = await self.provider.chat(
-            messages=llm_messages,
+            messages=contexto["messages"],
         )
 
         message = response.choices[0].message
 
-        sources = list(
-            dict.fromkeys(
-                documento["source"]
-                for documento in documentos
-            )
-        )
-
         return {
             "content": message.content,
-            "sources": sources,
-            "retrieved_documents": documentos,
-            "search_query": pergunta_busca,
+            "sources": contexto["sources"],
+            "retrieved_documents": contexto[
+                "retrieved_documents"
+            ],
+            "search_query": contexto["search_query"],
             "usage": {
                 "prompt_tokens": response.usage.prompt_tokens,
                 "completion_tokens": response.usage.completion_tokens,

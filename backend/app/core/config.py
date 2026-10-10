@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:5173"
     max_tool_iterations: int = 4
     rag_top_k: int = 6
+    rag_score_threshold: float = 0.60
     model_config = SettingsConfigDict(env_file="../.env", extra="ignore")
 
     @property
