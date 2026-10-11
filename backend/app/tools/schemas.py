@@ -10,7 +10,11 @@ class BuscarFiliaisInput(BaseModel):
     )
     tipo_estabelecimento: str | None = Field(
         default=None,
-        description="Tipo de estabelecimento, por exemplo BAIRRO ou CENTRO.",
+        description=(
+            "Tipo de estabelecimento, por exemplo BAIRRO ou CENTRO. "
+            "Use este filtro somente quando o usuário solicitar "
+            "explicitamente um tipo de estabelecimento."
+        ),
     )
     delivery: SimNao | None = Field(
         default=None,

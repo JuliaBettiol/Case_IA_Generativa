@@ -1,3 +1,4 @@
+import re
 from typing import Any
 
 from app.llm.openai_provider import OpenAIProvider
@@ -35,13 +36,19 @@ REGRAS:
 9. Quando houver riscos graves descritos no contexto, deixe claro que
    situações graves exigem avaliação profissional.
 
-10. Ao final da resposta, inclua uma seção "Fonte" citando exatamente
-    o nome do arquivo da bula fornecido no contexto.
+10. Ao final da resposta, inclua uma seção "Fontes" contendo somente
+    os nomes exatos dos arquivos das bulas que efetivamente sustentam
+    informações apresentadas na resposta.
 
-11. Não cite uma fonte que não tenha sido fornecida no contexto.
+11. Cada fonte deve ser escrita exatamente como aparece no contexto,
+    incluindo a extensão .pdf.
 
-12. Cite somente fontes que sustentem as informações apresentadas
-    na resposta.
+12. Não cite uma fonte que não tenha sido fornecida no contexto.
+
+13. Não cite uma bula apenas porque ela foi recuperada. Cite somente
+    as fontes efetivamente utilizadas para sustentar a resposta.
+
+14. Não altere, abrevie ou invente nomes de arquivos de fontes.
 """
 
 
@@ -64,6 +71,76 @@ class RAGService:
             }
             for documento in documentos
         ]
+
+    @staticmethod
+    def _fontes_recuperadas(
+        documentos: list[dict[str, Any]],
+    ) -> list[str]:
+        return list(
+            dict.fromkeys(
+                documento["source"]
+                for documento in documentos
+            )
+        )
+
+    @staticmethod
+    def _extrair_fontes_citadas(
+        resposta: str,
+        fontes_disponiveis: list[str],
+    ) -> list[str]:
+        resposta_normalizada = resposta.casefold()
+
+        return [
+            fonte
+            for fonte in fontes_disponiveis
+            if fonte.casefold() in resposta_normalizada
+        ]
+
+    @staticmethod
+    def _mensagem_sem_documentos(
+        validation: str,
+    ) -> str:
+        if validation == "medicamento_indisponivel":
+            return (
+                "Não encontrei esse medicamento nas bulas "
+                "disponíveis para consulta."
+            )
+
+        if validation == "orientacao_individual":
+            return (
+                "Não posso indicar qual medicamento, dose ou "
+                "tratamento você deve utilizar com base nas bulas "
+                "disponíveis. Para uma orientação individualizada, "
+                "procure avaliação de um profissional de saúde."
+            )
+
+        return (
+            "Não encontrei informações suficientes nas bulas "
+            "disponíveis para responder com segurança."
+        )
+
+    @staticmethod
+    def _remover_secao_fontes(
+        resposta: str,
+    ) -> str:
+        """
+        Remove a seção textual de fontes da resposta porque as fontes
+        são renderizadas separadamente pela interface.
+
+        A extração das fontes citadas deve ocorrer antes desta etapa.
+        """
+        padrao = re.compile(
+            r"\n*\s*(?:#{1,6}\s*)?"
+            r"(?:\*\*)?fontes?(?:\*\*)?\s*:?\s*"
+            r"(?:\n.*)*$",
+            flags=re.IGNORECASE,
+        )
+
+        return re.sub(
+            padrao,
+            "",
+            resposta,
+        ).rstrip()
 
     async def preparar_contexto(
         self,
@@ -93,9 +170,9 @@ class RAGService:
         }:
             return {
                 "messages": [],
-                "sources": [],
                 "retrieved_documents": [],
                 "search_query": pergunta_busca,
+                "validation": validacao,
             }
 
         documentos = await self.retriever.buscar(
@@ -132,18 +209,11 @@ class RAGService:
             },
         ]
 
-        sources = list(
-            dict.fromkeys(
-                documento["source"]
-                for documento in documentos
-            )
-        )
-
         return {
             "messages": llm_messages,
-            "sources": sources,
             "retrieved_documents": documentos,
             "search_query": pergunta_busca,
+            "validation": validacao,
         }
 
     async def stream_resposta(
@@ -152,34 +222,68 @@ class RAGService:
     ):
         contexto = await self.preparar_contexto(messages)
 
+        documentos = contexto["retrieved_documents"]
+        fontes_disponiveis = self._fontes_recuperadas(
+            documentos
+        )
+
+        # Metadados de recuperação são enviados imediatamente.
+        # As fontes citadas só podem ser conhecidas após a geração.
         yield {
             "type": "metadata",
             "data": {
-                "sources": contexto["sources"],
+                "sources": [],
                 "search_query": contexto["search_query"],
                 "retrieved_documents": self._documentos_publicos(
-                    contexto["retrieved_documents"]
+                    documentos
                 ),
             },
         }
 
-        if not contexto["retrieved_documents"]:
+        if not documentos:
             yield {
                 "type": "content",
                 "data": {
-                    "text": (
-                        "Não encontrei informações suficientes "
-                        "nas bulas disponíveis para responder "
-                        "com segurança."
+                    "text": self._mensagem_sem_documentos(
+                        contexto["validation"]
                     ),
                 },
             }
             return
 
+        resposta_completa = ""
+        usage = None
+
         async for evento in self.provider.stream_chat(
             contexto["messages"]
         ):
-            yield evento
+            if evento["type"] == "content":
+                texto = evento["data"]["text"]
+                resposta_completa += texto
+
+                # Mantemos o streaming real da resposta.
+                yield evento
+
+            elif evento["type"] == "usage":
+                usage = evento["data"]
+
+        fontes_citadas = self._extrair_fontes_citadas(
+            resposta_completa,
+            fontes_disponiveis,
+        )
+
+        yield {
+            "type": "final_metadata",
+            "data": {
+                "sources": fontes_citadas,
+            },
+        }
+
+        if usage:
+            yield {
+                "type": "usage",
+                "data": usage,
+            }
 
     async def responder(
         self,
@@ -187,12 +291,12 @@ class RAGService:
     ) -> dict[str, Any]:
         contexto = await self.preparar_contexto(messages)
 
-        if not contexto["retrieved_documents"]:
+        documentos = contexto["retrieved_documents"]
+
+        if not documentos:
             return {
-                "content": (
-                    "Não encontrei informações suficientes "
-                    "nas bulas disponíveis para responder "
-                    "com segurança."
+                "content": self._mensagem_sem_documentos(
+                    contexto["validation"]
                 ),
                 "sources": [],
                 "retrieved_documents": [],
@@ -205,13 +309,21 @@ class RAGService:
         )
 
         message = response.choices[0].message
+        resposta = message.content or ""
+
+        fontes_disponiveis = self._fontes_recuperadas(
+            documentos
+        )
+
+        fontes_citadas = self._extrair_fontes_citadas(
+            resposta,
+            fontes_disponiveis,
+        )
 
         return {
-            "content": message.content,
-            "sources": contexto["sources"],
-            "retrieved_documents": contexto[
-                "retrieved_documents"
-            ],
+            "content": resposta,
+            "sources": fontes_citadas,
+            "retrieved_documents": documentos,
             "search_query": contexto["search_query"],
             "usage": {
                 "prompt_tokens": response.usage.prompt_tokens,

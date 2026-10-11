@@ -152,18 +152,24 @@ class ChatService:
         ]
 
         tools_executadas: list[dict[str, Any]] = []
+        finalizar_sem_tools = False
 
         for _ in range(
             self.settings.max_tool_iterations
         ):
             response = await self.provider.chat(
                 messages=historico,
-                tools=TOOL_DEFINITIONS,
+                tools=(
+                    None
+                    if finalizar_sem_tools
+                    else TOOL_DEFINITIONS
+                ),
             )
 
             message = response.choices[0].message
 
-            # Caso o modelo responda sem precisar de ferramenta.
+            # O modelo já produziu a resposta final sem precisar
+            # solicitar uma ferramenta.
             if not message.tool_calls:
                 yield {
                     "type": "metadata",
@@ -178,6 +184,19 @@ class ChatService:
                         "text": message.content or "",
                     },
                 }
+
+                if response.usage:
+                    yield {
+                        "type": "usage",
+                        "data": {
+                            "prompt_tokens":
+                                response.usage.prompt_tokens,
+                            "completion_tokens":
+                                response.usage.completion_tokens,
+                            "total_tokens":
+                                response.usage.total_tokens,
+                        },
+                    }
 
                 return
 
@@ -203,6 +222,7 @@ class ChatService:
             )
 
             encontrou_resultado = False
+            houve_execucao_valida = False
 
             for tool_call in message.tool_calls:
                 nome = tool_call.function.name
@@ -212,10 +232,42 @@ class ChatService:
                         tool_call.function.arguments
                     )
 
+                    # Evita executar exatamente a mesma ferramenta
+                    # com os mesmos argumentos mais de uma vez no
+                    # mesmo turno.
+                    chamada_repetida = any(
+                        chamada["name"] == nome
+                        and chamada["arguments"] == argumentos
+                        for chamada in tools_executadas
+                    )
+
+                    if chamada_repetida:
+                        historico.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id":
+                                    tool_call.id,
+                                "content": json.dumps(
+                                    {
+                                        "error": (
+                                            "Esta ferramenta já foi "
+                                            "executada com estes mesmos "
+                                            "argumentos neste turno. "
+                                            "Use o resultado anterior."
+                                        )
+                                    },
+                                    ensure_ascii=False,
+                                ),
+                            }
+                        )
+                        continue
+
                     resultado = executar_tool(
                         nome,
                         argumentos,
                     )
+
+                    houve_execucao_valida = True
 
                     tools_executadas.append(
                         {
@@ -254,6 +306,12 @@ class ChatService:
                         }
                     )
 
+            # Depois de uma busca válida de filiais, não oferecemos
+            # novas ferramentas na iteração seguinte. O modelo deve
+            # apenas formular a resposta final com os dados obtidos.
+            if houve_execucao_valida:
+                finalizar_sem_tools = True
+
             if encontrou_resultado:
                 yield {
                     "type": "metadata",
@@ -268,6 +326,48 @@ class ChatService:
                     )
                 ):
                     yield evento
+
+                return
+
+            # Resultado vazio também é uma resposta válida.
+            # O modelo deve explicar que nenhuma filial corresponde
+            # aos filtros, sem inventar novas buscas complementares.
+            if houve_execucao_valida and finalizar_sem_tools:
+                final_response = await self.provider.chat(
+                    messages=historico,
+                    tools=None,
+                )
+
+                final_message = (
+                    final_response.choices[0].message
+                )
+
+                yield {
+                    "type": "metadata",
+                    "data": {
+                        "tool_calls": tools_executadas,
+                    },
+                }
+
+                yield {
+                    "type": "content",
+                    "data": {
+                        "text": final_message.content or "",
+                    },
+                }
+
+                if final_response.usage:
+                    yield {
+                        "type": "usage",
+                        "data": {
+                            "prompt_tokens":
+                                final_response.usage.prompt_tokens,
+                            "completion_tokens":
+                                final_response.usage.completion_tokens,
+                            "total_tokens":
+                                final_response.usage.total_tokens,
+                        },
+                    }
 
                 return
 

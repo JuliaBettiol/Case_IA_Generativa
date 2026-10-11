@@ -78,6 +78,24 @@ async def chat_stream(
                             ),
                         }
 
+                    elif evento["type"] == "final_metadata":
+                        sources = evento["data"].get(
+                            "sources",
+                            [],
+                        )
+
+                        yield {
+                            "event": "metadata",
+                            "data": json.dumps(
+                                {
+                                    "route": "bulas",
+                                    "trace_id": trace.trace_id,
+                                    "sources": sources,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+
                     elif evento["type"] == "usage":
                         usage = evento["data"]
 
