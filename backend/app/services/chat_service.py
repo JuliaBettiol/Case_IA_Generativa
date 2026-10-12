@@ -3,7 +3,7 @@ from typing import Any, AsyncIterator
 
 from app.core.config import get_settings
 from app.core.prompts import SYSTEM_PROMPT
-from app.llm.openai_provider import OpenAIProvider
+from app.llm.factory import create_llm_provider
 from app.llm.schemas import LLMUsage
 from app.tools.definitions import TOOL_DEFINITIONS
 from app.tools.registry import executar_tool
@@ -11,7 +11,7 @@ from app.tools.registry import executar_tool
 
 class ChatService:
     def __init__(self) -> None:
-        self.provider = OpenAIProvider()
+        self.provider = create_llm_provider()
         self.settings = get_settings()
 
     @staticmethod
@@ -27,22 +27,20 @@ class ChatService:
         ]
 
     @staticmethod
-    def _mensagem_tool_calls(
-        message: Any,
-    ) -> dict[str, Any]:
+    def _mensagem_tool_calls(message) -> dict[str, Any]:
         return {
             "role": "assistant",
             "content": message.content,
             "tool_calls": [
                 {
-                    "id": tool_call.id,
+                    "id": tc.id,
                     "type": "function",
                     "function": {
-                        "name": tool_call.name,
-                        "arguments": tool_call.arguments,
+                        "name": tc.name,
+                        "arguments": tc.arguments,
                     },
                 }
-                for tool_call in message.tool_calls
+                for tc in message.tool_calls
             ],
         }
 
@@ -87,8 +85,7 @@ class ChatService:
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
         historico = self._criar_historico(messages)
-
-        tools_executadas: list[dict[str, Any]] = []
+        tools_executadas = []
         finalizar_sem_tools = False
 
         usage_total = {
@@ -118,9 +115,7 @@ class ChatService:
                 return {
                     "content": message.content or "",
                     "tool_calls": tools_executadas,
-                    "usage": self._usage_final(
-                        usage_total
-                    ),
+                    "usage": self._usage_final(usage_total),
                 }
 
             historico.append(
@@ -129,13 +124,9 @@ class ChatService:
 
             houve_execucao_valida = False
 
-            for tool_call in message.tool_calls:
-                nome = tool_call.name
-
+            for tc in message.tool_calls:
                 try:
-                    argumentos = json.loads(
-                        tool_call.arguments
-                    )
+                    argumentos = json.loads(tc.arguments)
 
                     if not isinstance(argumentos, dict):
                         raise ValueError(
@@ -144,7 +135,7 @@ class ChatService:
                         )
 
                     chamada_repetida = any(
-                        chamada["name"] == nome
+                        chamada["name"] == tc.name
                         and chamada["arguments"] == argumentos
                         for chamada in tools_executadas
                     )
@@ -153,14 +144,12 @@ class ChatService:
                         resultado = {
                             "error": (
                                 "Esta ferramenta já foi executada "
-                                "com os mesmos argumentos neste turno. "
-                                "Utilize o resultado anterior."
+                                "com os mesmos argumentos."
                             )
                         }
-
                     else:
                         resultado = executar_tool(
-                            nome,
+                            tc.name,
                             argumentos,
                         )
 
@@ -168,7 +157,7 @@ class ChatService:
 
                         tools_executadas.append(
                             {
-                                "name": nome,
+                                "name": tc.name,
                                 "arguments": argumentos,
                             }
                         )
@@ -180,7 +169,7 @@ class ChatService:
 
                 historico.append(
                     self._mensagem_resultado_tool(
-                        tool_call.id,
+                        tc.id,
                         resultado,
                     )
                 )
@@ -189,8 +178,7 @@ class ChatService:
                 finalizar_sem_tools = True
 
         raise RuntimeError(
-            "Limite máximo de iterações "
-            "de ferramentas atingido."
+            "Limite máximo de iterações de ferramentas atingido."
         )
 
     async def stream_resposta(
@@ -198,8 +186,7 @@ class ChatService:
         messages: list[dict[str, Any]],
     ) -> AsyncIterator[dict[str, Any]]:
         historico = self._criar_historico(messages)
-
-        tools_executadas: list[dict[str, Any]] = []
+        tools_executadas = []
         finalizar_sem_tools = False
 
         usage_total = {
@@ -240,9 +227,7 @@ class ChatService:
                     },
                 }
 
-                usage = self._usage_final(
-                    usage_total
-                )
+                usage = self._usage_final(usage_total)
 
                 if usage:
                     yield {
@@ -259,13 +244,9 @@ class ChatService:
             houve_execucao_valida = False
             encontrou_resultado = False
 
-            for tool_call in message.tool_calls:
-                nome = tool_call.name
-
+            for tc in message.tool_calls:
                 try:
-                    argumentos = json.loads(
-                        tool_call.arguments
-                    )
+                    argumentos = json.loads(tc.arguments)
 
                     if not isinstance(argumentos, dict):
                         raise ValueError(
@@ -274,7 +255,7 @@ class ChatService:
                         )
 
                     chamada_repetida = any(
-                        chamada["name"] == nome
+                        chamada["name"] == tc.name
                         and chamada["arguments"] == argumentos
                         for chamada in tools_executadas
                     )
@@ -283,14 +264,12 @@ class ChatService:
                         resultado = {
                             "error": (
                                 "Esta ferramenta já foi executada "
-                                "com os mesmos argumentos neste turno. "
-                                "Utilize o resultado anterior."
+                                "com os mesmos argumentos."
                             )
                         }
-
                     else:
                         resultado = executar_tool(
-                            nome,
+                            tc.name,
                             argumentos,
                         )
 
@@ -298,7 +277,7 @@ class ChatService:
 
                         tools_executadas.append(
                             {
-                                "name": nome,
+                                "name": tc.name,
                                 "arguments": argumentos,
                             }
                         )
@@ -313,7 +292,7 @@ class ChatService:
 
                 historico.append(
                     self._mensagem_resultado_tool(
-                        tool_call.id,
+                        tc.id,
                         resultado,
                     )
                 )
@@ -335,24 +314,19 @@ class ChatService:
                     if evento["type"] == "usage":
                         dados = evento["data"]
 
-                        usage_total["prompt_tokens"] += (
-                            dados.get("prompt_tokens", 0)
-                        )
-
-                        usage_total["completion_tokens"] += (
-                            dados.get("completion_tokens", 0)
-                        )
-
-                        usage_total["total_tokens"] += (
-                            dados.get("total_tokens", 0)
-                        )
-
+                        for chave in (
+                            "prompt_tokens",
+                            "completion_tokens",
+                            "total_tokens",
+                        ):
+                            usage_total[chave] += dados.get(
+                                chave,
+                                0,
+                            )
                     else:
                         yield evento
 
-                usage = self._usage_final(
-                    usage_total
-                )
+                usage = self._usage_final(usage_total)
 
                 if usage:
                     yield {
@@ -384,15 +358,12 @@ class ChatService:
                     "type": "content",
                     "data": {
                         "text": (
-                            final_response.message.content
-                            or ""
+                            final_response.message.content or ""
                         ),
                     },
                 }
 
-                usage = self._usage_final(
-                    usage_total
-                )
+                usage = self._usage_final(usage_total)
 
                 if usage:
                     yield {
@@ -403,6 +374,5 @@ class ChatService:
                 return
 
         raise RuntimeError(
-            "Limite máximo de iterações "
-            "de ferramentas atingido."
+            "Limite máximo de iterações de ferramentas atingido."
         )

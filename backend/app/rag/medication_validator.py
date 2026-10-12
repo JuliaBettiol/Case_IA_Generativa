@@ -1,6 +1,6 @@
 from typing import Literal
 
-from app.llm.openai_provider import OpenAIProvider
+from app.llm.factory import create_llm_provider
 from app.rag.medications import identificar_source
 
 
@@ -64,12 +64,13 @@ Responda SOMENTE com uma das três categorias.
 
 class MedicationValidator:
     def __init__(self) -> None:
-        self.provider = OpenAIProvider()
+        self.provider = create_llm_provider()
 
     async def validar(
         self,
         pergunta: str,
     ) -> ValidationResult:
+
         if identificar_source(pergunta):
             return "medicamento_disponivel"
 

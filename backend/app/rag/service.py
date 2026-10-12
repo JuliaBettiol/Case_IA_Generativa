@@ -1,12 +1,10 @@
 import re
-
 from typing import Any
 
-from app.llm.openai_provider import OpenAIProvider
+from app.llm.factory import create_llm_provider
 from app.rag.medication_validator import MedicationValidator
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.retriever import Retriever
-
 from app.observability.timing import medir_etapa_async
 
 
@@ -58,7 +56,7 @@ REGRAS:
 class RAGService:
     def __init__(self) -> None:
         self.retriever = Retriever()
-        self.provider = OpenAIProvider()
+        self.provider = create_llm_provider()
         self.query_rewriter = QueryRewriter()
         self.medication_validator = MedicationValidator()
 
@@ -143,7 +141,6 @@ class RAGService:
         self,
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
-
         if not messages:
             raise ValueError(
                 "É necessário fornecer pelo menos uma mensagem."
@@ -220,12 +217,9 @@ class RAGService:
         self,
         messages: list[dict[str, Any]],
     ):
-        contexto = await self.preparar_contexto(
-            messages
-        )
+        contexto = await self.preparar_contexto(messages)
 
         documentos = contexto["retrieved_documents"]
-
         fontes_disponiveis = self._fontes_recuperadas(
             documentos
         )
@@ -261,7 +255,6 @@ class RAGService:
             ):
                 if evento["type"] == "content":
                     texto = evento["data"]["text"]
-
                     resposta_completa += texto
 
                     yield evento
@@ -291,10 +284,7 @@ class RAGService:
         self,
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
-
-        contexto = await self.preparar_contexto(
-            messages
-        )
+        contexto = await self.preparar_contexto(messages)
 
         documentos = contexto["retrieved_documents"]
 
@@ -314,8 +304,7 @@ class RAGService:
                 messages=contexto["messages"],
             )
 
-        message = response.message
-        resposta = message.content or ""
+        resposta = response.message.content or ""
 
         fontes_disponiveis = self._fontes_recuperadas(
             documentos

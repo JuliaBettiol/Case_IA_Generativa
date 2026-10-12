@@ -1,6 +1,6 @@
 from typing import Literal
 
-from app.llm.openai_provider import OpenAIProvider
+from app.llm.factory import create_llm_provider
 from app.observability.timing import medir_etapa_async
 
 
@@ -42,7 +42,7 @@ bulas
 
 class RouterService:
     def __init__(self) -> None:
-        self.provider = OpenAIProvider()
+        self.provider = create_llm_provider()
 
     async def classificar(
         self,

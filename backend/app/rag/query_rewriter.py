@@ -1,6 +1,6 @@
 from typing import Any
 
-from app.llm.openai_provider import OpenAIProvider
+from app.llm.factory import create_llm_provider
 
 
 QUERY_REWRITER_PROMPT = """
@@ -35,12 +35,13 @@ REGRAS:
 
 class QueryRewriter:
     def __init__(self) -> None:
-        self.provider = OpenAIProvider()
+        self.provider = create_llm_provider()
 
     async def reescrever(
         self,
         messages: list[dict[str, Any]],
     ) -> str:
+
         if not messages:
             raise ValueError(
                 "É necessário fornecer o histórico da conversa."
@@ -56,8 +57,6 @@ class QueryRewriter:
                 "A última mensagem não possui conteúdo."
             )
 
-        # No primeiro turno não existe contexto anterior
-        # para resolver. Preservamos exatamente a pergunta.
         if len(messages) == 1:
             return ultima_pergunta
 
@@ -85,6 +84,7 @@ class QueryRewriter:
     def _formatar_historico(
         messages: list[dict[str, Any]],
     ) -> str:
+
         linhas = []
 
         for message in messages:
