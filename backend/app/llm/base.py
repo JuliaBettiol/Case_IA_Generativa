@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator
+from app.llm.schemas import LLMResponse
 
 class LLMProvider(ABC):
     @abstractmethod
@@ -7,7 +8,7 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
-    ) -> Any:
+    ) -> LLMResponse:
         pass
 
     @abstractmethod

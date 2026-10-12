@@ -33,6 +33,7 @@ class Retriever:
         resultados = self.vector_store.buscar(
             query_vector=vetores[0],
             limit=limite,
+            source=source_esperada,
         )
 
         if aplicar_threshold:
@@ -41,13 +42,6 @@ class Retriever:
                 for documento in resultados
                 if documento.get("score", 0)
                 >= self.settings.rag_score_threshold
-            ]
-
-        if source_esperada:
-            resultados = [
-                documento
-                for documento in resultados
-                if documento.get("source") == source_esperada
             ]
 
         return resultados

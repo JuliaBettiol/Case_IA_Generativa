@@ -1,14 +1,26 @@
 import json
+
 from fastapi import APIRouter
 from sse_starlette.sse import EventSourceResponse
+
 from app.models.chat import ChatRequest
 from app.services.router_service import RouterService
 from app.rag.service import RAGService
 from app.services.assistant_service import AssistantService
+
 from app.observability.tracing import TraceContext
 from app.observability.logger import log_error, log_turn
+from app.observability.token_tracker import (
+    iniciar_contagem,
+    obter_tokens,
+    finalizar_contagem,
+)
 
-router = APIRouter(prefix="/api", tags=["stream"])
+
+router = APIRouter(
+    prefix="/api",
+    tags=["stream"],
+)
 
 router_service = RouterService()
 rag_service = RAGService()
@@ -33,6 +45,9 @@ async def chat_stream(
         )
 
     async def event_generator():
+        # Cada requisição possui seu próprio acumulador.
+        token_contexto = iniciar_contagem()
+
         try:
             pergunta = messages[-1]["content"]
 
@@ -40,7 +55,9 @@ async def chat_stream(
                 pergunta
             )
 
-            # RAG com streaming real
+            # ==========================================
+            # ROTA RAG — BULAS
+            # ==========================================
             if rota == "bulas":
                 usage = None
                 sources = []
@@ -50,11 +67,16 @@ async def chat_stream(
                     messages
                 ):
                     if evento["type"] == "metadata":
-                        sources = evento["data"].get("sources", [])
+                        sources = evento["data"].get(
+                            "sources",
+                            [],
+                        )
+
                         retrieved_documents = evento["data"].get(
                             "retrieved_documents",
                             [],
                         )
+
                         metadata = {
                             "route": "bulas",
                             "trace_id": trace.trace_id,
@@ -99,23 +121,27 @@ async def chat_stream(
                     elif evento["type"] == "usage":
                         usage = evento["data"]
 
+                # Inclui router, validador, rewriter
+                # e geração final, quando executados.
+                usage_total = obter_tokens() or usage
+
                 log_turn(
                     trace_id=trace.trace_id,
                     route="bulas",
                     latency_ms=trace.elapsed_ms(),
-                    usage=usage,
+                    usage=usage_total,
                     tool_calls=[],
                     sources=sources,
                     retrieved_documents=retrieved_documents,
                 )
-                
+
                 yield {
                     "event": "done",
                     "data": json.dumps(
                         {
                             "trace_id": trace.trace_id,
                             "latency_ms": trace.elapsed_ms(),
-                            "usage": usage,
+                            "usage": usage_total,
                         },
                         ensure_ascii=False,
                     ),
@@ -123,7 +149,9 @@ async def chat_stream(
 
                 return
 
-            # Filiais com streaming real
+            # ==========================================
+            # ROTA TOOLS — FILIAIS
+            # ==========================================
             usage = None
             tool_calls = []
 
@@ -133,15 +161,15 @@ async def chat_stream(
                 )
             ):
                 if evento["type"] == "metadata":
-                    tool_calls = evento["data"].get("tool_calls", [])
+                    tool_calls = evento["data"].get(
+                        "tool_calls",
+                        [],
+                    )
 
                     metadata = {
                         "route": "filiais",
                         "trace_id": trace.trace_id,
-                        "tool_calls": evento["data"].get(
-                            "tool_calls",
-                            [],
-                        ),
+                        "tool_calls": tool_calls,
                         "sources": [],
                         "search_query": None,
                     }
@@ -166,23 +194,27 @@ async def chat_stream(
                 elif evento["type"] == "usage":
                     usage = evento["data"]
 
+            # Inclui o roteador e as chamadas
+            # realizadas pelo ChatService.
+            usage_total = obter_tokens() or usage
+
             log_turn(
                 trace_id=trace.trace_id,
                 route="filiais",
                 latency_ms=trace.elapsed_ms(),
-                usage=usage,
+                usage=usage_total,
                 tool_calls=tool_calls,
                 sources=[],
                 retrieved_documents=[],
             )
-            
+
             yield {
                 "event": "done",
                 "data": json.dumps(
                     {
                         "trace_id": trace.trace_id,
                         "latency_ms": trace.elapsed_ms(),
-                        "usage": usage,
+                        "usage": usage_total,
                     },
                     ensure_ascii=False,
                 ),
@@ -205,6 +237,11 @@ async def chat_stream(
                     ensure_ascii=False,
                 ),
             }
+
+        finally:
+            # Evita que a contagem de uma requisição
+            # interfira na próxima.
+            finalizar_contagem(token_contexto)
 
     return EventSourceResponse(
         event_generator()

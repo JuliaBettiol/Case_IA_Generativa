@@ -87,8 +87,7 @@ class MedicationValidator:
         )
 
         resultado = (
-            response.choices[0]
-            .message.content
+            (response.message.content or "")
             .strip()
             .lower()
         )

@@ -1,19 +1,13 @@
-from types import SimpleNamespace
-
 import pytest
-
+from app.llm.schemas import LLMMessage, LLMResponse
 from app.rag.medication_validator import MedicationValidator
 
 
-def resposta_llm(texto: str):
-    return SimpleNamespace(
-        choices=[
-            SimpleNamespace(
-                message=SimpleNamespace(
-                    content=texto,
-                )
-            )
-        ]
+def resposta_llm(texto: str) -> LLMResponse:
+    return LLMResponse(
+        message=LLMMessage(
+            content=texto,
+        )
     )
 
 

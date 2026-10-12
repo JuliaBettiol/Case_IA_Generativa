@@ -79,7 +79,7 @@ class QueryRewriter:
             ],
         )
 
-        return response.choices[0].message.content.strip()
+        return (response.message.content or "").strip()
 
     @staticmethod
     def _formatar_historico(

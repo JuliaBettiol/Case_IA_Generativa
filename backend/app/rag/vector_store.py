@@ -3,6 +3,9 @@ from typing import Any
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
+    FieldCondition,
+    Filter,
+    MatchValue,
     PointStruct,
     VectorParams,
 )
@@ -121,10 +124,24 @@ class VectorStore:
         self,
         query_vector: list[float],
         limit: int = 6,
+        source: str | None = None,
     ) -> list[dict[str, Any]]:
+        filtro = None
+
+        if source:
+            filtro = Filter(
+                must=[
+                    FieldCondition(
+                        key="source",
+                        match=MatchValue(value=source),
+                    )
+                ]
+            )
+
         resultados = self.client.query_points(
             collection_name=self.collection_name,
             query=query_vector,
+            query_filter=filtro,
             limit=limit,
             with_payload=True,
         ).points

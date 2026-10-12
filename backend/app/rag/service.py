@@ -308,7 +308,7 @@ class RAGService:
             messages=contexto["messages"],
         )
 
-        message = response.choices[0].message
+        message = response.message
         resposta = message.content or ""
 
         fontes_disponiveis = self._fontes_recuperadas(
@@ -325,11 +325,9 @@ class RAGService:
             "sources": fontes_citadas,
             "retrieved_documents": documentos,
             "search_query": contexto["search_query"],
-            "usage": {
-                "prompt_tokens": response.usage.prompt_tokens,
-                "completion_tokens": response.usage.completion_tokens,
-                "total_tokens": response.usage.total_tokens,
-            }
-            if response.usage
-            else None,
+            "usage": (
+                response.usage.to_dict()
+                if response.usage
+                else None
+            ),
         }
