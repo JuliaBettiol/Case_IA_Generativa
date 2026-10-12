@@ -18,6 +18,21 @@ class VectorStore:
 
         self.collection_name = settings.qdrant_collection
 
+    def collection_esta_pronta(
+        self,
+        expected_points: int,
+    ) -> bool:
+        if not self.client.collection_exists(
+            collection_name=self.collection_name
+        ):
+            return False
+
+        info = self.client.get_collection(
+            collection_name=self.collection_name
+        )
+
+        return info.points_count == expected_points
+    
     def criar_collection(
         self,
         vector_size: int = 1536,
