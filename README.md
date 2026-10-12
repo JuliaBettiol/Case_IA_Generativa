@@ -360,3 +360,13 @@ docker compose down -v
 ```
 
 Na próxima inicialização após remover o volume, os embeddings serão gerados novamente.
+
+---
+
+# Documentação complementar
+
+Para informações detalhadas sobre a arquitetura, decisões técnicas,
+trade-offs e limitações, consulte:
+
+- [Arquitetura Técnica](docs/ARCHITECTURE.md)
+- [Recomendações Estratégicas](docs/STRATEGIC_RECOMMENDATIONS.md)
