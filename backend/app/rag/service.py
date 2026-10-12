@@ -1,10 +1,13 @@
 import re
+
 from typing import Any
 
 from app.llm.openai_provider import OpenAIProvider
 from app.rag.medication_validator import MedicationValidator
 from app.rag.query_rewriter import QueryRewriter
 from app.rag.retriever import Retriever
+
+from app.observability.timing import medir_etapa_async
 
 
 RAG_SYSTEM_PROMPT = """
@@ -123,12 +126,6 @@ class RAGService:
     def _remover_secao_fontes(
         resposta: str,
     ) -> str:
-        """
-        Remove a seção textual de fontes da resposta porque as fontes
-        são renderizadas separadamente pela interface.
-
-        A extração das fontes citadas deve ocorrer antes desta etapa.
-        """
         padrao = re.compile(
             r"\n*\s*(?:#{1,6}\s*)?"
             r"(?:\*\*)?fontes?(?:\*\*)?\s*:?\s*"
@@ -146,6 +143,7 @@ class RAGService:
         self,
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
+
         if not messages:
             raise ValueError(
                 "É necessário fornecer pelo menos uma mensagem."
@@ -156,13 +154,15 @@ class RAGService:
             "",
         )
 
-        pergunta_busca = await self.query_rewriter.reescrever(
-            messages
-        )
+        async with medir_etapa_async("query_rewrite_ms"):
+            pergunta_busca = await self.query_rewriter.reescrever(
+                messages
+            )
 
-        validacao = await self.medication_validator.validar(
-            pergunta_busca
-        )
+        async with medir_etapa_async("medication_validation_ms"):
+            validacao = await self.medication_validator.validar(
+                pergunta_busca
+            )
 
         if validacao in {
             "medicamento_indisponivel",
@@ -220,15 +220,16 @@ class RAGService:
         self,
         messages: list[dict[str, Any]],
     ):
-        contexto = await self.preparar_contexto(messages)
+        contexto = await self.preparar_contexto(
+            messages
+        )
 
         documentos = contexto["retrieved_documents"]
+
         fontes_disponiveis = self._fontes_recuperadas(
             documentos
         )
 
-        # Metadados de recuperação são enviados imediatamente.
-        # As fontes citadas só podem ser conhecidas após a geração.
         yield {
             "type": "metadata",
             "data": {
@@ -254,18 +255,19 @@ class RAGService:
         resposta_completa = ""
         usage = None
 
-        async for evento in self.provider.stream_chat(
-            contexto["messages"]
-        ):
-            if evento["type"] == "content":
-                texto = evento["data"]["text"]
-                resposta_completa += texto
+        async with medir_etapa_async("llm_generation_ms"):
+            async for evento in self.provider.stream_chat(
+                contexto["messages"]
+            ):
+                if evento["type"] == "content":
+                    texto = evento["data"]["text"]
 
-                # Mantemos o streaming real da resposta.
-                yield evento
+                    resposta_completa += texto
 
-            elif evento["type"] == "usage":
-                usage = evento["data"]
+                    yield evento
+
+                elif evento["type"] == "usage":
+                    usage = evento["data"]
 
         fontes_citadas = self._extrair_fontes_citadas(
             resposta_completa,
@@ -289,7 +291,10 @@ class RAGService:
         self,
         messages: list[dict[str, Any]],
     ) -> dict[str, Any]:
-        contexto = await self.preparar_contexto(messages)
+
+        contexto = await self.preparar_contexto(
+            messages
+        )
 
         documentos = contexto["retrieved_documents"]
 
@@ -304,9 +309,10 @@ class RAGService:
                 "usage": None,
             }
 
-        response = await self.provider.chat(
-            messages=contexto["messages"],
-        )
+        async with medir_etapa_async("llm_generation_ms"):
+            response = await self.provider.chat(
+                messages=contexto["messages"],
+            )
 
         message = response.message
         resposta = message.content or ""

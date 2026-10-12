@@ -1,7 +1,11 @@
 from typing import Literal
+
 from app.llm.openai_provider import OpenAIProvider
+from app.observability.timing import medir_etapa_async
+
 
 Route = Literal["filiais", "bulas"]
+
 
 ROUTER_PROMPT = """
 Classifique a pergunta do usuário em exatamente uma das categorias:
@@ -35,6 +39,7 @@ ou
 bulas
 """
 
+
 class RouterService:
     def __init__(self) -> None:
         self.provider = OpenAIProvider()
@@ -43,18 +48,20 @@ class RouterService:
         self,
         pergunta: str,
     ) -> Route:
-        response = await self.provider.chat(
-            messages=[
-                {
-                    "role": "system",
-                    "content": ROUTER_PROMPT,
-                },
-                {
-                    "role": "user",
-                    "content": pergunta,
-                },
-            ],
-        )
+
+        async with medir_etapa_async("router_ms"):
+            response = await self.provider.chat(
+                messages=[
+                    {
+                        "role": "system",
+                        "content": ROUTER_PROMPT,
+                    },
+                    {
+                        "role": "user",
+                        "content": pergunta,
+                    },
+                ],
+            )
 
         rota = (
             (response.message.content or "")
